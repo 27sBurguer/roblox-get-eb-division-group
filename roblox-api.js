@@ -4,7 +4,7 @@ const axios = require('axios');
 class RobloxAPI {
   constructor() {
     this.baseURL = 'http://localhost:3000'; // URL do seu servidor
-    this.apiKey = 'SUA_CHAVE_SECRETA_AQUI';
+    this.apiKey = 'SYSTEM_BY_NIKI';
   }
   
   // Método para testar conexão

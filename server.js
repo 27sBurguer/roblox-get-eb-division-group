@@ -21,7 +21,7 @@ const io = socketIo(server, {
 });
 
 // Variáveis de controle
-const API_KEY = process.env.API_KEY || 'SUA_CHAVE_SECRETA_AQUI';
+const API_KEY = process.env.API_KEY || 'SYSTEM_BY_NIKI';
 const connectedClients = new Map();
 
 // 🔥 CORREÇÃO 2: Middlewares básicos
