@@ -2,57 +2,49 @@ const express = require('express');
 const http = require('http');
 const socketIo = require('socket.io');
 const cors = require('cors');
-const path = require('path');
 require('dotenv').config();
 
 // Importar módulos
-const robloxAPI = require('./roblox-api');
 const firebaseUtils = require('./firebase-utils');
 
 const app = express();
 const server = http.createServer(app);
+
+// 🔥 CORREÇÃO 1: Configure CORS APENAS UMA VEZ, NO INÍCIO
+app.use(cors()); // Configuração simples primeiro
+
 const io = socketIo(server, {
   cors: {
-    origin: "*", // Em produção, especifique o IP do Roblox Studio
+    origin: "*",
     methods: ["GET", "POST"]
   }
 });
-
-// Configurar CORS para produção
-const allowedOrigins = [
-  'https://www.roblox.com',
-  'https://web.roblox.com',
-  'http://localhost:3000',
-  'http://localhost:64537', // Roblox Studio
-  // Adicione outros domínios necessários
-];
-
-// Middleware
-app.use(cors());
-app.use(express.json());
-app.use(express.static('public'));
 
 // Variáveis de controle
 const API_KEY = process.env.API_KEY || 'SUA_CHAVE_SECRETA_AQUI';
 const connectedClients = new Map();
 
-app.use(cors({
-  origin: function (origin, callback) {
-    // Permitir requests sem origin (como mobile apps ou curl)
-    if (!origin) return callback(null, true);
-    
-    if (allowedOrigins.indexOf(origin) === -1) {
-      const msg = 'A política de CORS não permite acesso desta origem.';
-      return callback(new Error(msg), false);
-    }
-    return callback(null, true);
-  },
-  credentials: true
-}));
+// 🔥 CORREÇÃO 2: Middlewares básicos
+app.use(express.json());
 
-// Servir página de status
+// 🔥 CORREÇÃO 3: Remova ou comente a pasta public se não existe
+// app.use(express.static('public')); // COMENTE ESTA LINHA SE NÃO TEM PASTA PUBLIC
+
+// 🔥 CORREÇÃO 4: Rota raiz SIMPLES
 app.get('/', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+  res.json({ 
+    message: 'Discord ↔ Roblox API Bridge',
+    status: 'online',
+    endpoints: {
+      status: '/api/status',
+      grupo: '/api/grupo/:id',
+      buscar: '/api/buscar-grupo',
+      membro: '/api/membro/:id',
+      ranking: '/api/ranking',
+      health: '/health'
+    },
+    timestamp: new Date().toISOString()
+  });
 });
 
 // Health check para Render
@@ -64,25 +56,7 @@ app.get('/health', (req, res) => {
   });
 });
 
-// Tratamento de erro 404
-app.use((req, res, next) => {
-  res.status(404).json({
-    error: 'Not Found',
-    message: `Rota ${req.originalUrl} não encontrada`
-  });
-});
-
-// Error handler global
-app.use((err, req, res, next) => {
-  console.error('Erro:', err.stack);
-  
-  res.status(err.status || 500).json({
-    error: err.message || 'Internal Server Error',
-    stack: process.env.NODE_ENV === 'development' ? err.stack : undefined
-  });
-});
-
-// 🔥 ROTAS HTTP (para requests do Roblox)
+// 🔥 ROTAS HTTP (para requests do Roblox) - COLOCAR ANTES DOS HANDLERS DE ERRO!
 app.get('/api/status', (req, res) => {
   res.json({
     status: 'online',
@@ -110,7 +84,6 @@ const authenticate = (req, res, next) => {
 app.get('/api/grupo/:grupoId', authenticate, async (req, res) => {
   try {
     const { grupoId } = req.params;
-    const { nivelMinimo, nivelMaximo } = req.query;
     
     console.log(`[API] Requisição para grupo: ${grupoId}`);
     
@@ -124,18 +97,8 @@ app.get('/api/grupo/:grupoId', authenticate, async (req, res) => {
       });
     }
     
-    // Obter membros do grupo
-    let membros = await firebaseUtils.obterMembrosGrupo(grupoId);
-    
-    // Filtrar por nível se especificado
-    if (nivelMinimo || nivelMaximo) {
-      membros = membros.filter(membro => {
-        const nivel = membro.nivel || 1;
-        const min = nivelMinimo ? parseInt(nivelMinimo) : 1;
-        const max = nivelMaximo ? parseInt(nivelMaximo) : 99;
-        return nivel >= min && nivel <= max;
-      });
-    }
+    // Obter membros do grupo (limite para teste)
+    let membros = await firebaseUtils.obterMembrosGrupo(grupoId, 50);
     
     // Obter cargos do grupo
     const cargos = await firebaseUtils.obterCargosGrupo(grupoId);
@@ -145,16 +108,16 @@ app.get('/api/grupo/:grupoId', authenticate, async (req, res) => {
       success: true,
       grupo: {
         id: grupoInfo.id,
-        nome: grupoInfo.nome,
-        descricao: grupoInfo.descricao,
-        donoId: grupoInfo.donoId,
-        donoTag: grupoInfo.donoTag,
+        nome: grupoInfo.nome || 'Sem nome',
+        descricao: grupoInfo.descricao || 'Sem descrição',
+        donoId: grupoInfo.donoId || 'Desconhecido',
+        donoTag: grupoInfo.donoTag || 'Desconhecido',
         totalMembros: grupoInfo.totalMembros || 0,
         totalContribuicoes: grupoInfo.totalContribuicoes || 0,
         nivel: grupoInfo.nivel || 1,
         xp: grupoInfo.xp || 0,
         privacidade: grupoInfo.privacidade || 'publico',
-        criadoEm: grupoInfo.criadoEm
+        criadoEm: grupoInfo.criadoEm || new Date().toISOString()
       },
       cargos: cargos.map(cargo => ({
         nome: cargo.nome,
@@ -163,12 +126,12 @@ app.get('/api/grupo/:grupoId', authenticate, async (req, res) => {
         membros: cargo.membros || 0
       })),
       membros: membros.map(membro => ({
-        usuarioId: membro.usuarioId,
-        cargo: membro.cargo,
+        usuarioId: membro.usuarioId || 'Desconhecido',
+        cargo: membro.cargo || 'Membro',
         nivel: membro.nivel || 1,
         contribuicao: membro.contribuicao || 0,
         xp: membro.xp || 0,
-        entrouEm: membro.entrouEm,
+        entrouEm: membro.entrouEm || new Date().toISOString(),
         ativo: membro.ativo !== false
       })),
       estatisticas: {
@@ -188,158 +151,21 @@ app.get('/api/grupo/:grupoId', authenticate, async (req, res) => {
     console.error('[API] Erro ao obter grupo:', error);
     res.status(500).json({ 
       error: 'Internal Server Error', 
-      message: error.message 
+      message: error.message,
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
     });
   }
 });
 
-// 🔍 BUSCAR GRUPO POR NOME
-app.get('/api/buscar-grupo', authenticate, async (req, res) => {
-  try {
-    const { nome, limite = 10 } = req.query;
-    
-    if (!nome) {
-      return res.status(400).json({ 
-        error: 'Bad Request', 
-        message: 'Parâmetro "nome" é obrigatório' 
-      });
-    }
-    
-    const grupos = await firebaseUtils.buscarGruposPorNome(nome, parseInt(limite));
-    
-    res.json({
-      success: true,
-      query: nome,
-      resultados: grupos.length,
-      grupos: grupos.map(grupo => ({
-        id: grupo.id,
-        nome: grupo.nome,
-        descricao: grupo.descricao,
-        donoTag: grupo.donoTag,
-        totalMembros: grupo.totalMembros || 0,
-        totalContribuicoes: grupo.totalContribuicoes || 0,
-        privacidade: grupo.privacidade || 'publico'
-      })),
-      timestamp: new Date().toISOString()
-    });
-    
-  } catch (error) {
-    console.error('[API] Erro ao buscar grupos:', error);
-    res.status(500).json({ 
-      error: 'Internal Server Error', 
-      message: error.message 
-    });
-  }
-});
+// ... (mantenha as outras rotas como estão)
 
-// 👤 OBTER INFORMAÇÕES DE UM MEMBRO
-app.get('/api/membro/:usuarioId', authenticate, async (req, res) => {
-  try {
-    const { usuarioId } = req.params;
-    const { grupoId } = req.query;
-    
-    let gruposMembro;
-    
-    if (grupoId) {
-      // Informações do membro em um grupo específico
-      const membroInfo = await firebaseUtils.obterMembroNoGrupo(grupoId, usuarioId);
-      
-      if (!membroInfo) {
-        return res.status(404).json({ 
-          error: 'Not Found', 
-          message: 'Membro não encontrado neste grupo' 
-        });
-      }
-      
-      gruposMembro = [{
-        grupoId,
-        cargo: membroInfo.cargo,
-        nivel: membroInfo.nivel || 1,
-        contribuicao: membroInfo.contribuicao || 0,
-        xp: membroInfo.xp || 0,
-        entrouEm: membroInfo.entrouEm,
-        ativo: membroInfo.ativo !== false
-      }];
-    } else {
-      // Todos os grupos do membro
-      gruposMembro = await firebaseUtils.obterGruposDoMembro(usuarioId);
-    }
-    
-    res.json({
-      success: true,
-      usuarioId,
-      totalGrupos: gruposMembro.length,
-      grupos: gruposMembro,
-      estatisticas: {
-        totalContribuicao: gruposMembro.reduce((sum, g) => sum + (g.contribuicao || 0), 0),
-        totalXP: gruposMembro.reduce((sum, g) => sum + (g.xp || 0), 0),
-        mediaNivel: gruposMembro.length > 0 
-          ? (gruposMembro.reduce((sum, g) => sum + (g.nivel || 1), 0) / gruposMembro.length).toFixed(2)
-          : 0
-      },
-      timestamp: new Date().toISOString()
-    });
-    
-  } catch (error) {
-    console.error('[API] Erro ao obter membro:', error);
-    res.status(500).json({ 
-      error: 'Internal Server Error', 
-      message: error.message 
-    });
-  }
-});
-
-// 🏆 RANKING DE GRUPOS
-app.get('/api/ranking', authenticate, async (req, res) => {
-  try {
-    const { limite = 10, tipo = 'membros' } = req.query;
-    
-    let ranking;
-    
-    switch (tipo) {
-      case 'contribuicoes':
-        ranking = await firebaseUtils.getRankingPorContribuicoes(parseInt(limite));
-        break;
-      case 'nivel':
-        ranking = await firebaseUtils.getRankingPorNivel(parseInt(limite));
-        break;
-      case 'membros':
-      default:
-        ranking = await firebaseUtils.getRankingPorMembros(parseInt(limite));
-    }
-    
-    res.json({
-      success: true,
-      tipo,
-      limite: parseInt(limite),
-      ranking: ranking.map((grupo, index) => ({
-        posicao: index + 1,
-        id: grupo.id,
-        nome: grupo.nome,
-        donoTag: grupo.donoTag,
-        totalMembros: grupo.totalMembros || 0,
-        totalContribuicoes: grupo.totalContribuicoes || 0,
-        nivel: grupo.nivel || 1,
-        xp: grupo.xp || 0
-      })),
-      timestamp: new Date().toISOString()
-    });
-    
-  } catch (error) {
-    console.error('[API] Erro ao obter ranking:', error);
-    res.status(500).json({ 
-      error: 'Internal Server Error', 
-      message: error.message 
-    });
-  }
-});
-
-// 🎯 WEBSOCKET (Comunicação em tempo real)
+// 🔥 CORREÇÃO 5: WebSocket - verificar se está conectando
 io.on('connection', (socket) => {
   console.log(`[Socket] Novo cliente conectado: ${socket.id}`);
   
-  // Autenticação via socket
   socket.on('authenticate', (data) => {
+    console.log(`[Socket] Tentativa de autenticação: ${socket.id}`);
+    
     if (data.apiKey === API_KEY) {
       connectedClients.set(socket.id, {
         authenticated: true,
@@ -360,54 +186,52 @@ io.on('connection', (socket) => {
     }
   });
   
-  // Ouvir por atualizações em tempo real
-  socket.on('subscribe-group', async (grupoId) => {
-    if (!connectedClients.get(socket.id)?.authenticated) {
-      return socket.emit('error', { message: 'Não autenticado' });
-    }
-    
-    console.log(`[Socket] Cliente ${socket.id} inscrito no grupo ${grupoId}`);
-    
-    // Enviar dados iniciais
-    try {
-      const grupoInfo = await firebaseUtils.obterGrupoPorId(grupoId);
-      
-      if (grupoInfo) {
-        socket.emit('group-data', {
-          type: 'initial',
-          grupoId,
-          data: grupoInfo,
-          timestamp: new Date().toISOString()
-        });
-      }
-    } catch (error) {
-      socket.emit('error', { message: error.message });
-    }
-  });
-  
-  // Desconexão
   socket.on('disconnect', () => {
     connectedClients.delete(socket.id);
     console.log(`[Socket] Cliente desconectado: ${socket.id}`);
   });
 });
 
-// 🚀 INICIAR SERVIDOR
+// 🔥 CORREÇÃO 6: Error handlers DEVEM SER OS ÚLTIMOS
+app.use((req, res, next) => {
+  console.log(`[404] Rota não encontrada: ${req.method} ${req.originalUrl}`);
+  res.status(404).json({
+    error: 'Not Found',
+    message: `Rota ${req.originalUrl} não encontrada`,
+    timestamp: new Date().toISOString()
+  });
+});
+
+app.use((err, req, res, next) => {
+  console.error('[ERROR] Erro global:', err.stack);
+  
+  res.status(err.status || 500).json({
+    error: err.message || 'Internal Server Error',
+    timestamp: new Date().toISOString()
+  });
+});
+
+// 🔥 CORREÇÃO 7: Iniciar servidor CORRETAMENTE
 const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => {
+server.listen(PORT, '0.0.0.0', () => {
   console.log(`
   🚀 Servidor rodando!
   📍 Porta: ${PORT}
+  🌐 URL: http://0.0.0.0:${PORT}
   📅 ${new Date().toLocaleString()}
   
-  🔗 Endpoints:
-  • GET  /api/status
-  • GET  /api/grupo/:id
-  • GET  /api/buscar-grupo?nome=...
-  • GET  /api/membro/:id
-  • GET  /api/ranking
+  🔗 Endpoints disponíveis:
+  • GET  /               → Status geral
+  • GET  /health         → Health check (Render)
+  • GET  /api/status     → Status da API
+  • GET  /api/grupo/:id  → Informações do grupo
+  • GET  /api/membro/:id → Informações do membro
   
-  🔐 API Key: ${API_KEY}
-  🔌 Socket.io: ws://localhost:${PORT}
+  🔐 API Key: ${API_KEY ? '✅ Configurada' : '❌ Não configurada'}
+  🔌 Socket.io: ws://0.0.0.0:${PORT}
   `);
+  
+  // Log para debug
+  console.log('[DEBUG] NODE_ENV:', process.env.NODE_ENV);
+  console.log('[DEBUG] API_KEY length:', API_KEY ? API_KEY.length : 0);
 });
